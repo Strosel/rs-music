@@ -1,6 +1,6 @@
 use std::ops::{Add, AddAssign};
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Copy, Clone)]
 pub enum Accidental {
     NFlat(i32),
     Flat,
@@ -9,14 +9,14 @@ pub enum Accidental {
     NSharp(i32),
 }
 
-impl Accidental {
-    pub fn i32(self) -> i32 {
-        match self {
-            Self::NFlat(n) => -(n.abs()),
-            Self::Flat => -1,
-            Self::Natural => 0,
-            Self::Sharp => 1,
-            Self::NSharp(n) => n.abs(),
+impl From<Accidental> for i32 {
+    fn from(a: Accidental) -> i32 {
+        match a {
+            Accidental::NFlat(n) => -(n.abs()),
+            Accidental::Flat => -1,
+            Accidental::Natural => 0,
+            Accidental::Sharp => 1,
+            Accidental::NSharp(n) => n.abs(),
         }
     }
 }
@@ -25,7 +25,7 @@ impl Add for Accidental {
     type Output = Accidental;
 
     fn add(self, rhs: Accidental) -> Self::Output {
-        match self.i32() + rhs.i32() {
+        match i32::from(self) + i32::from(rhs) {
             -1 => Self::Flat,
             0 => Self::Natural,
             1 => Self::Sharp,
