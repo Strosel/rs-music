@@ -1,6 +1,6 @@
 use std::ops::{Add, AddAssign};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Accidental {
     NFlat(i32),
     Flat,

@@ -1,14 +1,15 @@
 use {
-    crate::{accidental::Accidental, duration::Duration},
+    crate::{accidental::Accidental, duration::Duration, envelope::Piano},
     rodio::source::Source,
-    std::time,
+    std::{convert::TryFrom, f32::consts::PI, ops::Sub, time},
 };
 
-const A4: f32 = 440.;
-const TWELFTH_ROOT: f32 = 1.05946309436;
+type Frequency = f32;
+
+const A4: Frequency = 440.;
 const SAMPLE_RATE: u32 = 44_100;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Pitch {
     A,
     B,
@@ -19,64 +20,133 @@ pub enum Pitch {
     G,
 }
 
-impl From<Pitch> for i32 {
-    fn from(p: Pitch) -> Self {
-        match p {
-            Pitch::A => 9,
-            Pitch::B => 11,
-            Pitch::C => 0,
-            Pitch::D => 2,
-            Pitch::E => 4,
-            Pitch::F => 5,
-            Pitch::G => 7,
+impl TryFrom<char> for Pitch {
+    type Error = &'static str;
+
+    fn try_from(c: char) -> Result<Self, Self::Error> {
+        match c {
+            'A' => Ok(Self::A),
+            'B' => Ok(Self::B),
+            'C' => Ok(Self::C),
+            'D' => Ok(Self::D),
+            'E' => Ok(Self::E),
+            'F' => Ok(Self::F),
+            'G' => Ok(Self::G),
+            _ => Err("Invalid Pitch"),
         }
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+macro_rules! reflex {
+    ($x:pat) => {
+        ($x, $x)
+    };
+    ($x:pat, $y:pat) => {
+        ($x, $y) | ($y, $x)
+    };
+    ($($x:pat)|*) => {
+        $(reflex!($x))|*
+    }
+}
+
+impl Sub for Pitch {
+    type Output = i32;
+
+    ///the number of half steps between two pitches
+    fn sub(self, rhs: Self) -> Self::Output {
+        use Pitch::*;
+        match (self, rhs) {
+            reflex![A | B | C | D | E | F | G] => 0,
+            (E, F) => 1,
+            (F, E) => -1,
+            (C, D) | (D, E) | (F, G) | (G, A) | (A, B) => 2,
+            (D, C) | (E, D) | (G, F) | (A, G) | (B, A) => -2,
+            (D, F) | (E, G) => 3,
+            (F, D) | (G, E) => -3,
+            (C, E) | (F, A) | (G, B) => 4,
+            (E, C) | (A, F) | (B, G) => -4,
+            (C, F) | (D, G) | (E, A) => 5,
+            (F, C) | (G, D) | (A, E) => -5,
+            (F, B) => 6,
+            (B, F) => -6,
+            (C, G) | (D, A) | (E, B) => 7,
+            (G, C) | (A, D) | (B, E) => -7,
+            (C, A) | (D, B) => 9,
+            (A, C) | (B, D) => -9,
+            (C, B) => 11,
+            (B, C) => -11,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Note {
     Note(Pitch, i32, Accidental, Duration),
     Rest(Duration),
 }
 
 impl Note {
-    fn freq(self) -> f32 {
-        match self {
-            Self::Note(p, oct, acc, _) => {
-                let dist = (i32::from(p) + (oct - 4) * 12) + i32::from(acc) - 9;
-                (A4 * TWELFTH_ROOT.powi(dist) * 100.).round() / 100.
-            }
-            Self::Rest(_) => 0f32,
+    fn duration(&self) -> Duration {
+        match *self {
+            Self::Note(_, _, _, d) => d,
+            Self::Rest(d) => d,
         }
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct Sound(pub Note, usize, usize);
+impl IntoIterator for Note {
+    type Item = f32;
+    type IntoIter = std::iter::FromFn<Box<dyn Send + FnMut() -> Option<Self::Item>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let mut sample: usize = 0;
+        let sample_duration = (self.duration().as_secs() * SAMPLE_RATE as f32) as usize;
+        let envelope_duration = sample_duration as f32 * 1.0;
+        let freq = Frequency::from(self);
+        let envelope = Piano {
+            attack: time::Duration::from_millis(1).as_secs_f32() * SAMPLE_RATE as f32,
+            decay: -1e-6,
+            release: -1e-4,
+        };
+
+        std::iter::from_fn(Box::new(move || {
+            if sample <= sample_duration {
+                let value = 2.0 * PI * freq * sample as f32 / SAMPLE_RATE as f32;
+                sample = sample.wrapping_add(1);
+                Some(envelope.apply(value, value.sin(), envelope_duration))
+            } else {
+                None
+            }
+        }))
+    }
+}
+
+impl From<Note> for Frequency {
+    fn from(n: Note) -> Frequency {
+        match n {
+            Note::Note(p, oct, acc, _) => {
+                //<https://pages.mtu.edu/~suits/NoteFreqCalcs.html>
+                let n = (Pitch::A - p + (oct - 4) * 12) + i32::from(acc);
+                (A4 * (2_f32).powf(n as f32 / 12.0) * 100.).round() / 100.
+            }
+            Note::Rest(_) => 0f32,
+        }
+    }
+}
+
+pub struct Sound(<Note as IntoIterator>::IntoIter, Duration);
 
 impl From<Note> for Sound {
-    fn from(n: Note) -> Self {
-        match n {
-            Note::Note(_, _, _, d) | Note::Rest(d) => Sound(
-                n,
-                0,
-                (time::Duration::from(d).as_secs_f32() * SAMPLE_RATE as f32) as usize,
-            ),
-        }
+    fn from(note: Note) -> Self {
+        let dur = note.duration();
+        Self(note.into_iter(), dur)
     }
 }
 
 impl Iterator for Sound {
-    type Item = f32;
-    #[inline]
-    fn next(&mut self) -> Option<f32> {
-        self.1 = self.1.wrapping_add(1);
-        if self.1 <= self.2 {
-            let value = 2.0 * 3.14159265 * self.0.freq() * self.1 as f32 / SAMPLE_RATE as f32;
-            Some(value.sin())
-        } else {
-            None
-        }
+    type Item = <Note as IntoIterator>::Item;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
     }
 }
 
@@ -98,28 +168,45 @@ impl Source for Sound {
 
     #[inline]
     fn total_duration(&self) -> Option<time::Duration> {
-        match self.0 {
-            Note::Note(_, _, _, d) | Note::Rest(d) => Some(time::Duration::from(d)),
-        }
+        Some(self.1.into())
     }
 }
 
 #[cfg(test)]
-use crate::duration::DurationBuilder;
+use {
+    crate::{duration::DurationBuilder, parse::parse},
+    Pitch::*,
+};
 
 #[test]
 fn test_freq() {
     let dur = DurationBuilder::from_bpm(120);
     assert_eq!(
-        Note::Note(Pitch::A, 4, Accidental::Natural, dur.build(1, 0)).freq(),
+        Frequency::from(Note::Note(A, 4, Accidental::Natural, dur.build(1, 0))),
         A4,
     );
     assert_eq!(
-        Note::Note(Pitch::A, 4, Accidental::Sharp, dur.build(1, 0)).freq(),
-        Note::Note(Pitch::B, 4, Accidental::Flat, dur.build(1, 0)).freq(),
+        Frequency::from(Note::Note(A, 4, Accidental::Sharp, dur.build(1, 0))),
+        Frequency::from(Note::Note(B, 4, Accidental::Flat, dur.build(1, 0))),
     );
     assert_eq!(
-        Note::Note(Pitch::A, 4, Accidental::Sharp, dur.build(1, 0)).freq(),
+        Frequency::from(Note::Note(A, 4, Accidental::Sharp, dur.build(1, 0))),
         466.16_f32,
     );
+    for (p, f) in [
+        (C, 261.63),
+        (D, 293.66),
+        (E, 329.63),
+        (F, 349.23),
+        (G, 392.00),
+        (A, 440.00),
+        (B, 493.88),
+    ] {
+        assert_eq!(
+            Frequency::from(Note::Note(p, 4, Accidental::Natural, dur.build(1, 0))),
+            f,
+            "Scale failed at {:?}",
+            p
+        );
+    }
 }
