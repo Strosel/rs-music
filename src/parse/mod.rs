@@ -51,38 +51,6 @@ pub fn parse_measure(input: &str) -> IResult<&str, Fraction> {
     Ok((input, f.into()))
 }
 
-//[Pitch][Oct][Acc][/Denom][Dots]
-//where Acc, Oct, and Denom could be implied.
-//Pitch is one of [A,B,C,D,E,F,G,R]
-//Oct is a number 0-? or some number of ^ or _ mixing is not allowed
-//Acc is some number of # or b or a single n mixing is not allowed
-//Denom must always be a power of 2
-//Dots is a string of .
-//
-//BPM:[bmp] to set bpm
-//
-//[nom]/[denom] for measure signature
-//
-//always check for correct staff count before allowing bpm or staff len to change
-//K:[Key][M|m]
-//M is major, impled by default
-//m is minor
-//valid keys:
-//[
-// C[M] = Am
-// G[M] = Em
-// D[M] = Bm
-// A[M] = F#m
-// E[M] = C#m
-// B[M] = G#m
-// Gb[M] = F#[M] = Ebm = D#m
-// Db[M] = Bbm
-// Ab[M] = Fm
-// Eb[M] = Cm
-// Bb[M] = Gm
-// F[M] = Dm
-//]
-
 enum Valid {
     Valid,
     Invalid(Fraction),
