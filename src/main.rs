@@ -1,5 +1,5 @@
 use {
-    crate::{duration::DurationBuilder, note::Sound},
+    crate::note::Sound,
     parse::parse,
     rodio::{OutputStream, Sink},
 };
@@ -15,12 +15,7 @@ fn main() {
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
 
-    for n in parse(
-        include_str!("../a_cruel_angels_thesis.txt"),
-        DurationBuilder::from_bpm(80).build(4, 0),
-    )
-    .into_iter()
-    {
+    for n in parse(include_str!("../a_cruel_angels_thesis.txt")).into_iter() {
         sink.append::<Sound>(n.into());
     }
 

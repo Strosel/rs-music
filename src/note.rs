@@ -86,7 +86,7 @@ pub enum Note {
 }
 
 impl Note {
-    fn duration(&self) -> Duration {
+    pub fn duration(&self) -> Duration {
         match *self {
             Self::Note(_, _, _, d) => d,
             Self::Rest(d) => d,
